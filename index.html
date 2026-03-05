@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Bomberman Mobile</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <style>
+    html, body { height: 100%; margin: 0; background: black; color: white; overflow: hidden; font-family: sans-serif; }
+    body { display: flex; flex-direction: column; align-items: center; justify-content: flex-start; }
+    
+    /* Shrink canvas to fit mobile screens */
+    canvas { 
+      background: forestgreen; 
+      max-width: 100%; 
+      max-height: 50vh; 
+      object-fit: contain;
+    }
+
+    .controls {
+      display: flex;
+      width: 100%;
+      justify-content: space-around;
+      align-items: center;
+      padding: 10px 0;
+      background: #111;
+    }
+
+    .d-pad {
+      display: grid;
+      grid-template-columns: repeat(3, 55px);
+      grid-template-rows: repeat(2, 55px);
+      gap: 5px;
+    }
+
+    .btn {
+      width: 55px;
+      height: 55px;
+      background: #333;
+      border: 2px solid #666;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: bold;
+      touch-action: manipulation;
+      user-select: none;
+    }
+
+    .btn:active { background: #555; }
+    .btn-down { grid-column: 2; }
+    
+    .bomb-btn {
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      background: #D72B16;
+      border: 4px solid white;
+    }
+  </style>
+</head>
+<body>
+
+  <canvas width="960" height="832" id="game"></canvas>
+
+  <div class="controls">
+    <div class="d-pad">
+      <div style="grid-column: 2" class="btn" id="w">W</div>
+      <div class="btn" id="a">A</div>
+      <div class="btn btn-down" id="s">S</div>
+      <div class="btn" id="d">D</div>
+    </div>
+
+    <div class="btn bomb-btn" id="bomb">BOMB</div>
+
+    <div class="d-pad">
+      <div style="grid-column: 2" class="btn" id="up">▲</div>
+      <div class="btn" id="left">◀</div>
+      <div class="btn btn-down" id="down">▼</div>
+      <div class="btn" id="right">▶</div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('game');
+    const context = canvas.getContext('2d');
+    const grid = 64;
+    const numRows = 13;
+    const numCols = 15;
+
+    // Assets and Level (from original source)
+    const softWallCanvas = document.createElement('canvas');
+    const softWallCtx = softWallCanvas.getContext('2d');
+    softWallCanvas.width = softWallCanvas.height = grid;
+    softWallCtx.fillStyle = 'black'; softWallCtx.fillRect(0, 0, grid, grid);
+    softWallCtx.fillStyle = '#a9a9a9'; softWallCtx.fillRect(1, 1, grid - 2, 20);
+    softWallCtx.fillRect(0, 23, 20, 18); softWallCtx.fillRect(22, 23, 42, 18);
+
+    const wallCanvas = document.createElement('canvas');
+    const wallCtx = wallCanvas.getContext('2d');
+    wallCanvas.width = wallCanvas.height = grid;
+    wallCtx.fillStyle = 'black'; wallCtx.fillRect(0, 0, grid, grid);
+    wallCtx.fillStyle = 'white'; wallCtx.fillRect(0, 0, grid - 2, grid - 2);
+    wallCtx.fillStyle = '#a9a9a9'; wallCtx.fillRect(2, 2, grid - 4, grid - 4);
+
+    const types = { wall: '▉', softWall: 1, bomb: 2 };
+    let entities = [];
+    let cells = [];
+    const template = [
+      ['▉','▉','▉','▉','▉','▉','▉','▉','▉','▉','▉','▉','▉','▉','▉'],
+      ['▉','x','x', , , , , , , , , ,'x','x','▉'],
+      ['▉','x','▉', ,'▉', ,'▉', ,'▉', ,'▉', ,'▉','x','▉'],
+      ['▉','x', , , , , , , , , , , ,'x','▉'],
+      ['▉', ,'▉', ,'▉', ,'▉', ,'▉', ,'▉', ,'▉', ,'▉'],
+      ['▉', , , , , , , , , , , , , ,'▉'],
+      ['▉', ,'▉', ,'▉', ,'▉', ,'▉', ,'▉', ,'▉', ,'▉'],
+      ['▉', , , , , , , , , , , , , ,'▉'],
+      ['▉', ,'▉', ,'▉', ,'▉', ,'▉', ,'▉', ,'▉', ,'▉'],
+      ['▉','x', , , , , , , , , , , ,'x','▉'],
+      ['▉','x','▉', ,'▉', ,'▉', ,'▉', ,'▉', ,'▉','x','▉'],
+      ['▉','x','x', , , , , , , , , ,'x','x','▉'],
+      ['▉','▉','▉','▉','▉','▉','▉','▉','▉','▉','▉','▉','▉','▉','▉']
+    ];
+
+    function generateLevel() {
+      cells = [];
+      for (let row = 0; row < numRows; row++) {
+        cells[row] = [];
+        for (let col = 0; col < numCols; col++) {
+          if (!template[row][col] && Math.random() < 0.90) cells[row][col] = types.softWall;
+          else if (template[row][col] === types.wall) cells[row][col] = types.wall;
+        }
+      }
+    }
+
+    function Bomb(row, col, size, owner) {
+      this.row = row; this.col = col; this.radius = grid * 0.4; this.size = size;
+      this.owner = owner; this.alive = true; this.type = types.bomb; this.timer = 3000;
+      this.update = function(dt) {
+        this.timer -= dt;
+        if (this.timer <= 0) return blowUpBomb(this);
+        this.radius = Math.ceil(this.timer / 500) % 2 === 0 ? grid * 0.4 : grid * 0.5;
+      };
+      this.render = function() {
+        const x = (this.col + 0.5) * grid; const y = (this.row + 0.5) * grid;
+        context.fillStyle = 'black'; context.beginPath(); context.arc(x, y, this.radius, 0, 2 * Math.PI); context.fill();
+      };
+    }
+
+    function blowUpBomb(bomb) {
+      if (!bomb.alive) return; bomb.alive = false; cells[bomb.row][bomb.col] = null;
+      [{r:-1,c:0},{r:1,c:0},{r:0,c:-1},{r:0,c:1}].forEach(d => {
+        for(let i=0; i<bomb.size; i++) {
+          const r = bomb.row+d.r*i, c = bomb.col+d.c*i;
+          if (cells[r][c] === types.wall) return;
+          entities.push({row:r, col:c, alive:true, timer:300, update(dt){this.timer-=dt; if(this.timer<=0)this.alive=false}, render(){context.fillStyle='orange'; context.fillRect(this.col*grid, this.row*grid, grid, grid)}});
+          if (cells[r][c]) { cells[r][c] = null; return; }
+        }
+      });
+    }
+
+    const player = { row: 1, col: 1, numBombs: 1, bombSize: 3, render() { 
+      context.fillStyle = 'white'; context.beginPath(); context.arc((this.col+0.5)*grid, (this.row+0.5)*grid, grid*0.35, 0, 2*Math.PI); context.fill();
+    }};
+
+    // --- CORE SHARED LOGIC ---
+    function move(dr, dc) {
+      if (!cells[player.row + dr][player.col + dc]) {
+        player.row += dr; player.col += dc;
+      }
+    }
+
+    function dropBomb() {
+      if (!cells[player.row][player.col] && entities.filter(e => e.type === types.bomb).length < player.numBombs) {
+        entities.push(new Bomb(player.row, player.col, player.bombSize, player));
+        cells[player.row][player.col] = types.bomb;
+      }
+    }
+
+    // --- INPUTS ---
+    document.addEventListener('keydown', e => {
+      const k = e.key.toLowerCase();
+      if (k==='w' || e.keyCode===38) move(-1,0);
+      if (k==='s' || e.keyCode===40) move(1,0);
+      if (k==='a' || e.keyCode===37) move(0,-1);
+      if (k==='d' || e.keyCode===39) move(0,1);
+      if (e.keyCode===32) dropBomb();
+    });
+
+    const bind = (id, fn) => {
+      document.getElementById(id).addEventListener('touchstart', e => { e.preventDefault(); fn(); });
+    };
+
+    bind('w', ()=>move(-1,0)); bind('up', ()=>move(-1,0));
+    bind('s', ()=>move(1,0));  bind('down', ()=>move(1,0));
+    bind('a', ()=>move(0,-1)); bind('left', ()=>move(0,-1));
+    bind('d', ()=>move(0,1));  bind('right', ()=>move(0,1));
+    bind('bomb', dropBomb);
+
+    // --- LOOP ---
+    let last = 0;
+    function loop(ts) {
+      requestAnimationFrame(loop);
+      let dt = ts - last; last = ts;
+      context.clearRect(0,0,canvas.width,canvas.height);
+      for(let r=0; r<numRows; r++) for(let c=0; c<numCols; c++) {
+        if(cells[r][c]===types.wall) context.drawImage(wallCanvas, c*grid, r*grid);
+        if(cells[r][c]===types.softWall) context.drawImage(softWallCanvas, c*grid, r*grid);
+      }
+      entities = entities.filter(e => e.alive);
+      entities.forEach(e => { e.update(dt); e.render(); });
+      player.render();
+    }
+
+    generateLevel();
+    requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
